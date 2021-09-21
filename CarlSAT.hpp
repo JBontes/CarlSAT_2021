@@ -69,11 +69,17 @@ public:
         bool operator<(const float rhs) const { return score < rhs; }
     };
 
-    /*multi*/set<score_t> vars_by_score;
+    set<score_t> vars_by_score;
     float cum_score;
     BestScores_t(): vars_by_score(), cum_score(0) {}
     uint32_t count() const { return vars_by_score.size(); }
     score_t last() const { if (count() == 0) { return score_t(0,0); } else { return *(--vars_by_score.cend()); } }
+
+    void clear() {
+        vars_by_score.clear();
+        cum_score = 0;
+        Ex = Ex2 = K = 0;
+    }
 
     void add(const int var, const float rscore) {
         assert(var > 0);
@@ -109,6 +115,7 @@ int BestScores_t::PickVar(RandomState_t& rng, const uint32_t topn, const uint32_
         auto item = vars_by_score.cend();
         advance(item, -randpick);
         return item->var;
+        //@@@@@@@@@@@@@@@ the tabulist is ignored here! 
     } else { //rest of the time do a stochastic pick
         const auto maxscore = last().score;
 
@@ -193,12 +200,12 @@ private:
     uint64_t     hClauseWeight;
     uint32_t     hClauseCount;
     int**        h_LiteralsInClauses;            //[cls][idx]
-    uint32_t*    h_LiteralsInClauseCount;
-    uint32_t*    h_SatisfiedLitCount;            //sat literal num in clauses;
-    uint64_t*    h_ClauseWeights;                //weight of clauses
+    uint32_t*    h_LiteralsInClauseCount;        //[cls]
+    uint32_t*    h_SatisfiedLitCount;            //[cls] sat literal num in clauses;
+    uint64_t*    h_ClauseWeights;                //[cls] weight of clauses
     //New for cardinality clauses
     uint32_t*    h_K_atLeast;                    //Cardinality clauses, the number of literals needed to satisfy.
-    bitset<64>** h_SATLiteralBits;             //bitset with all the satisfied literals
+    bitset<64>** h_SATLiteralBits;               //bitset with all the satisfied literals
 
     //info soft clauses, all soft clauses are normal SAT clauses
     int          sClauseCount;                    //#of soft clauses
@@ -208,21 +215,25 @@ private:
     uint32_t*    s_SatisfiedLitCount;             //[cls]#of sat literals in clause 0..ClauseLength
     int*         s_CriticalVarInSoftClause;       //[cls]Which var in a clause with 1 sat literal is satisfied?
     uint64_t*    s_ClauseWeights;                 //[cls]soft weights
-    int*         s_ClauseLengthCorrections;       //[cls]multiplication factor for clauseweights due to clause length
+    int*         s_ClauseLengthCorrections;       //[length]multiplication factor for clauseweights due to clause length
     int          SoftClauseWeight(const int cls) { return s_ClauseWeights[cls] * s_ClauseLengthCorrections[s_LiteralsInClauseCount[cls]]; }
 
     //info about vars;
     //int**        v_lits_hard_clause_id;  // [var][#] clauses number;
-    int**        v_lits_soft_clause_id;    // [var][#] Occurrences for the soft clauses
+    int*         v_lits_hard_size;       // [var] # of hard clauses a variable occurs in
+    //int          v_lits_hard_unsat_count;// #vars that falsify hard clauses
+    int*         v_lits_hard_kcount;     // [var] hardsize * k_atleast, for use in heuristics
     Occurrence_t** v_lits_hard_clause_id;  // [var][#] Occurrences for the hard clauses
+
+    int**        v_lits_soft_clause_id;    // [var][#] Occurrences for the soft clauses
+    
     //uint32_t**   v_lits_pos_hard;        // [var][cls] position of a literal in a hard clause //for cardinality clauses only
 
-    int**        v_lits_hard_neighbor;   // neighbor for var in cls;
-    int*         v_lits_hard_size;       // [var] # of hard clauses a variable occurs in
+    //int**        v_lits_hard_neighbor;   // neighbor for var in cls;
+    
     int*         v_lits_soft_size;       // [var] # of soft clauses a variable occurs in
-    int          v_lits_soft_unsat_count;// #vars that falsify soft clauses
-    int          v_lits_hard_unsat_count;// #vars that falsify hard clauses
-    int*         v_lits_hard_kcount;     // [var] hardsize * k_atleast, for use in heuristics
+    //int          v_lits_soft_unsat_count;// #vars that falsify soft clauses
+    
     BestScores_t SoftSortedScores;       // soft variables sorted by rscore
     BestScores_t HardSortedScores;       // hard variables sorted by rscore
 
@@ -279,18 +290,18 @@ private:
         assert(oldscore >= 0);
         assert(newscore >= 0);
         assert(delta != 0);
-        if (oldscore == 0) { //add variable to the falsified list
-            assert(newscore > 0);
-            unsat_in_soft[v_lits_soft_unsat_count] = var;
-            idx_in_unsat_soft[var] = v_lits_soft_unsat_count++;
-        }
-        else if (newscore == 0) { //remove variable from the falsified list
-            assert(oldscore > 0);
-            const auto tailvar = unsat_in_soft[--v_lits_soft_unsat_count];
-            const auto holeidx = idx_in_unsat_soft[var];
-            unsat_in_soft[holeidx] = tailvar;
-            idx_in_unsat_soft[tailvar] = holeidx;
-        }
+        // if (oldscore == 0) { //add variable to the falsified list
+        //     assert(newscore > 0);
+        //     unsat_in_soft[v_lits_soft_unsat_count] = var;
+        //     idx_in_unsat_soft[var] = v_lits_soft_unsat_count++;
+        // }
+        // else if (newscore == 0) { //remove variable from the falsified list
+        //     assert(oldscore > 0);
+        //     const auto tailvar = unsat_in_soft[--v_lits_soft_unsat_count];
+        //     const auto holeidx = idx_in_unsat_soft[var];
+        //     unsat_in_soft[holeidx] = tailvar;
+        //     idx_in_unsat_soft[tailvar] = holeidx;
+        // }
         const auto newrscore = rscore<make_soft>(var);
         SoftSortedScores.add(var, newrscore);
     }
@@ -322,18 +333,18 @@ private:
         assert(delta != 0);
         assert(newscore >= 0);
         assert(oldscore >= 0);
-        if (oldscore == 0) { //literal falsifies one or more hard clauses
-            //assert(newscore > 0);
-            unsat_in_hard[v_lits_hard_unsat_count] = var;
-            idx_in_unsat_hard[var] = v_lits_hard_unsat_count++;
-        }
-        else if (newscore == 0) { //literal does not falsify any hard clause
-            //assert(oldscore > 0);
-            const auto tailvar = unsat_in_hard[--v_lits_hard_unsat_count];
-            const auto holeidx = idx_in_unsat_hard[var];
-            unsat_in_hard[holeidx] = tailvar;
-            idx_in_unsat_hard[tailvar] = holeidx;
-        }
+        // if (oldscore == 0) { //literal falsifies one or more hard clauses
+        //     //assert(newscore > 0);
+        //     unsat_in_hard[v_lits_hard_unsat_count] = var;
+        //     idx_in_unsat_hard[var] = v_lits_hard_unsat_count++;
+        // }
+        // else if (newscore == 0) { //literal does not falsify any hard clause
+        //     //assert(oldscore > 0);
+        //     const auto tailvar = unsat_in_hard[--v_lits_hard_unsat_count];
+        //     const auto holeidx = idx_in_unsat_hard[var];
+        //     unsat_in_hard[holeidx] = tailvar;
+        //     idx_in_unsat_hard[tailvar] = holeidx;
+        // }
         //assert(h_MakeScore[var] >= 0);
         const auto newrscore = rscore<repair_hard>(var);
         HardSortedScores.add(var, newrscore);
@@ -359,13 +370,14 @@ private:
     }
 
     //unsat clauses of hard clauses
-    int*         unsat_in_hard; //[var]
-    int*         critical_in_hard; //[var]
+    //int*         unsat_in_hard; //[var]
+    //int*         critical_in_hard; //[var]
     int          h_FalseCount;
-    int*         idx_in_unsat_hard; //[var]
-    int*         idx_in_critical_hard; //[var]
+    //int*         idx_in_unsat_hard; //[var]
+    //int*         idx_in_critical_hard; //[var]
     //void         sat_hard(const int idx);   //clause idx, pop
     //void         unsat_hard(const int idx); //push
+    void         InitClauseLengthCorrections();
     void         SetHardLiteralBit(const Occurrence_t Occ);
     void         ResetHardLiteralBit(const Occurrence_t Occ);
     inline bool  HardLiteralBit(const uint32_t cls, const uint32_t LitPos) const;
@@ -378,8 +390,8 @@ private:
 
     //false var in soft
     uint32_t    s_FalseCount;
-    int*        unsat_in_soft;             //[var]
-    int*        idx_in_unsat_soft;         //[var]
+    //int*        unsat_in_soft;             //[idx]
+    //int*        idx_in_unsat_soft;         //[var]
     mutable int SATSoftCount;              //# of satisfied soft clauses, for reporting purposes only
     inline void sat_soft(const int var);   //var idx, pop from stack
            void unsat_soft(const int var); //walk through all the soft clauses containing the var, update unsat list, critical list and update the scoring
@@ -442,6 +454,9 @@ private:
 public:
     PureCMS_t() = delete;
     PureCMS_t(const Parameters_t& parameters): rng(parameters.RandomSeed), SoftSortedScores(), HardSortedScores() {
+        //if (parameters.ForceRandomNumbers) {
+        //    rng = parameters.ForcedRNG;
+        //}
         if (!build(parameters.show())) { exit(-1); };
         Cache = new HashTable_t<1024>(this->soln->DataSize(), 1, parameters.scoremargin_percentage);
     }
@@ -453,12 +468,22 @@ public:
     bool    build(const Parameters_t& parameters);
     //print soln following requirement.
     template <int LogLevel>
-    void    showSoln(bool needVerify) const;
+    void    showSoln(const bool needVarify, const bool showassignment) const;
     template <int LogLevel>
     void    showSoln(const string& filename) const;
     //the local search process, which need call build first.
     void    InnerRestart();
     void    OuterRestart();
+    bool    hasOutputFile() const { return parameters.OutputFilename.length() > 0; }
+    bool    hasInputFile() const  { return parameters.InputFilename.length() > 0; }
+    bool    doWriteWitness() const { return parameters.WriteWitness; }
+    template <int LogLevel>
+    bool    write_state() const;
+    bool    hasResumed = false;
+    bool    read_state();
+    void    write_scores();
+    template <int LogLevel>
+    bool    TrySaveBestSoln();
     template <int LogLevel>
     void    doLS();
     //initialize the solution by greedy means
@@ -470,5 +495,5 @@ public:
     template <int LogLevel>
     void TrySaveBestToCache(const int phaseI_maxloops);
     void DoRestart();
-    void InterpretSoln(const Atom_t* CachedSoln);
+    void InterpretSoln(Atom_t* CachedSoln);
 };
