@@ -8,6 +8,7 @@ CarlSAT is developed by Johan Bontes (UCT), Marijn Heule (CMU/Amazon) and Mike W
 
 Optimization problems with complex constraints occur in many contexts, including scheduling / planning, vehicle routing, bin packing, and placement problems. One promising technique for representing and solving integer optimization problems with Boolean constraints is called partial MaxSAT, which is a generalization of Boolean Satisfiability problem to include clauses that must be satisfied ('hard' clauses) and clauses that are not required to be satisfied but have a cost for non-satisifaction ('soft' clauses).
 
+
 We introduce CarlSAT, a novel stochastic local search solver for a subset of partial MaxSAT problems that can be stated in 'pure' form. In pure problems all literals in hard (required) clauses have a single polarity opposite from that of literals in soft (optional) clauses; this simplifies the structure of the problem, allowing for more efficient processing. The solver features native support for boolean cardinality constraints, which occur commonly in MaxSAT problems. This negates the need to encode these constraints into conjunctive normal form, thereby avoiding the geometric expansion in problem size associated with this translation. We introduce a new 'wcard' file format supporting cardinality clauses. Processing cardinality clauses adds a small overhead whereas the smaller problem size makes for much larger savings. Finally, CarlSAT eliminates the clause selection step traditionally used in local search SAT solvers. These innovations result in a solver that outperforms the current state-of-art in local search MaxSAT solving. It can be applied to a large subset of NP-Complete problems, such as set cover and bin packing.
 
 ## Usage
@@ -18,9 +19,9 @@ Gives a full list of commandline arguments.
 
 After compilation, CarlSAT can be run from the commandline using the command:
 
-    carlsat -z filename -t timeout [options]
+    carlsat -z filename -t timeout_in_secs [options]
 
-Both `-z` and `-t` are required, all other arguments are optional.
+The `-z` is required if no `-i` parameter (see below) is given. All other arguments are optional, but it's highly recommended to supply a timeout parameter. 
 
 ### Input files
 
@@ -34,7 +35,7 @@ polarity of soft clauses, meaning that there are no literals with mixed polarity
 
 ### Timeout
 
-The timeout is specified as a whole number of seconds, e.g.: `-t 60` for a 1 minute timeout.
+The timeout is specified as a whole number of seconds (`-t`) plus a whole number of millisecs (`-m`), e.g.: `-t 60 -m 10` for a 1 minute 10 milliseconds timeout.
 The solver may take slightly longer than the timeout to finish, but never shorter.
 
 ### Optional commandline arguments
@@ -42,24 +43,33 @@ The solver may take slightly longer than the timeout to finish, but never shorte
 In order to understand the optional arguments an overview of the core algorithm is useful.
 This is given in the **algorithm** section.
 
-    -a, --initialphase1
-The initial number of flips in phase I.
+    `-h, --help`
 
-    -b, --increasephase1
+Display a list of available command line arguments, the solver will exit immediately after showing the list.
+
+    `-a, --initialphase1`
+
+The initial number of flips in phase I.
+Example: `-a 1`
+
+    `-b, --increasephase1`
 
 The increase in flip count after -c loops have completed
+Example: `-b 1`
 
-    -c, --maxflipphase1
+    `-c, --maxflipphase1`
 
 The number of loops to run both Phase I and II until -a is increased.
 This parameter is subject to a reluctant doubling (Luby) sequence.
+Example: `-c 1024`
 
-    -d, --debug
+    `-d, --debug`
 
 Run the solver with assertions enabled.
+Example: `-d`
 
-    -e, --hard_epsilon
-    -f, --soft_epsilon
+    `-e, --hard_epsilon`
+    `-f, --soft_epsilon`
 
 Variables are picked for flipping using a following formula confronting the make score (the number of clause satisfied when the variable flips) with its break score (the number of clauses unsatisfied by the flip). Soft make/break scores take the weight of the clause into account.
 
@@ -68,28 +78,46 @@ Variables are picked for flipping using a following formula confronting the make
 
 The high hard and soft epsilons moderate the effect of high hard break values,
 low epsilons emphasises the effect of break values.
+These options are the only ones that accept floating point values and aregenerally given as a pair. 
+Example: `-e 0.1 -f 0.1`
 
-    -h, --help
-
-Display a list of available command line arguments.
-
-    -r, --randompick
+    `-r, --randompick`
 
 A number between 0 and 100, the percentage of the time a random variable pick is performed instead of a stochastic pick.
 r = 0: variables are always stochastically picked based on the above formula, r = 100 variables are always picked at random.
+Example: `-r 100`
 
-    -x, --topx
+    `-x, --topx`
 
 The top *x* number of best scoring variables to take into account in the stochastic pick.
 1 = the best variable is always selected in stochastic pick; *x* > 1 = a stochastic pick is performed taking the top *x* scoring variables into account.
+Example: `-x 4`
 
-    -s, --randomseed
+    `-s, --randomseed`
 
 The random seed used to initalize the random generator.
+Example: `-s 1`
 
-    -t, --timeout
+    `-t, --timeout`
+    `-m, --millisecs`
 
-Required: the minimum number of seconds the solver will spend on the problem. The solver may go over this limit by several milliseconds.
+Required: the minimum number of seconds plus millisecs the solver will spend on the problem. 
+The time to perform file I/O, initialization and setup is not included in this timeout. 
+Thus the solver may go over this limit by a bit.
+These options can be given as a pair, or by themselves, but must be integer values.
+Example: `-t 2` (2 secs) or `-t 2 -m 500` (2.5 secs) or `-m 20000` (20 secs)
+
+    `-i, --read_input`
+    `-w, --write_output`
+
+Read (`-i`) and/or write (`-w`) a state file that can be used to suspend and restart the solver from.
+If the stated input file does not exist, then the `-z` parameter is used instead. If both `-i` and `-z` are specified than `-i` takes precedence.
+This allows one to suspend the solver and restart it with different parameters.  
+The `-w` option writes a state file to disk. 
+The `-i` option reads in a previously saved state file.
+The filepaths given must not contain spaces!
+Example: `-i ./test/testfile2.out`
+         `-w ./text/testfile1.out`
 
     -v, --verbose
 
@@ -97,8 +125,10 @@ The verbosity of reporting:
 
      0 = Only report the final score
      1 = default: report improvements in solve score every time the solver gets stuck (100s to 1000s of lines)
-     2 = report every individual improvement in score (possibly millions of lines)
+     2 = report every individual improvement in score (possibly thousands of lines)
      3 = report every step the solver takes (you asked for it...)
+Example: `-v 2`
+    
 
 ## Algorithm
 
@@ -149,8 +179,7 @@ DataTypes.hpp      - All the int sized primitive types used in the SAT solver, i
 ezOptionParser.hpp - Remik Ziemlinski's command argument parser
 FilePreprocess.hpp - Parses commandline arguments (and perhaps later file preprocessing)
 HashTable          - A linear probe hashtable and solution store
-murmurhash3.*      - Austin Appleby's original code. I use a simplified version. There to make sure I haven't messed up.
-```
+murmurhash3.*      - Austin Appleby's original code. I use a simplified version. It's present to make sure I haven't messed up.
 
 ## `.wcard` file format
 
@@ -160,7 +189,7 @@ the header is thesame as a wcnf header except that 'wcnf' is replaced by 'wcard'
 
     p wcard <var_count> <clause_count> <magic_hard_clause_number>
 
-Soft clauses can have **any** weight, except for the magic_hard_clause_number.
+Soft clauses can have **any** non-negative weight, except for the magic_hard_clause_number.
 Fixed costs can be denoted by an empty soft clause; e.g.: a fixed cost of 2347664 is marked as follows
 
     2347664 0
@@ -196,7 +225,7 @@ The folloing problem is pure:
     124222 0             //empty soft clause denoting fixed cost
     1000 -1 -2 -3 0      //boolean hard clause with all negative literals
     1000 -1 -2 -3 >= 2   //at_least hard clause with negative literals.
-    1000 1 2 3 <= 1      //al_most hard clause equivalent to the previous line.
+    1000 1 2 3 <= 1      //at_most hard clause equivalent to the previous line.
 
 CarlSAT cannot handle equality and non_equality cardinality clauses, because these cannot
 be represented in pure form when translated into at_least clauses.
@@ -205,7 +234,7 @@ be represented in pure form when translated into at_least clauses.
 ## Performance
 
 The ARG team has benchmarked CarlSAT against leading ILP+ solvers (X-press, CPlex, and Gurobi) using a number of
-real-world middle mile problems (test results available on request, contact mww@amazon.com).
+real-world middle mile problems.
 Version 0.1 outperforms all of them on their default settings when processing the data in wcard form and comes
 within 1-2% of the best performance by the ILP+ solvers.
 
@@ -215,23 +244,37 @@ existing preprocessors for wcard files.
 
 For pure wcnf files, CarlSAT outperforms the award winning Loandra MaxSAT solver by a wide margin on a large number of benchmarks.
 
-Any pure wcnf files that can be expressed using only unit clauses for the soft constraints is more efficiently solved using the
-LinearLS solver, contact Mike Whalen (mww@amazon.com) to obtain a version of this solver.
-
 ## Availability
 
-The source code for CarlSAT is available under an Apache 2.0 license at https://github.com/JBontes/CarlSAT2021
+The source code for CarlSAT is available from: https://github.com/JBontes/CarlSAT_2021
 
 ## Todo items
 
-- restarts need to be implemented properly
-- add support for equal_to and not_equal_to cardinality clauses
 - improve the heuristics
 
 ## References
 
-LinearLS: Cai S, Zhang X. Pure MaxSAT and Its Applications to Combinatorial Optimization via Linear Local Search. in International Conference on Principles and Practice of Constraint Programming 2020 Sep 7 (pp. 90-106). Springer, Cham.   
-https://lcs.ios.ac.cn/~caisw/MaxSAT.html    
+LinearLS: 
+```
+@inproceedings{cai2020pure,
+  title={Pure MaxSAT and Its Applications to Combinatorial Optimization via Linear Local Search},
+  author={Cai, Shaowei and Zhang, Xindi},
+  booktitle={International Conference on Principles and Practice of Constraint Programming},
+  pages={90--106},
+  year={2020},
+  organization={Springer}
+}
 
-Loundra: Berg, J., Korhonen, T. and Järvisalo, M., Loandra: PMRES Extended with Preprocessing Entering MaxSAT Evaluation 2017. MaxSAT Evaluation 2017, p.13.  
-https://github.com/jezberg/loandra  
+Loandra:
+```
+@article{berg2019loandra,
+  title={Loandra: Core-Boosted Linear Search Entering MaxSAT Evaluation 2019},
+  author={Berg, Jeremias and Demirovic, Emir and Stuckey, Peter},
+  journal={MaxSAT Evaluation 2019},
+  pages={23}
+}
+```
+
+## Link to test set used:
+A test generator with a number of premade tests can be downloaded from https://github.com/marijnheule/rnd-route
+
