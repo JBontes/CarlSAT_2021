@@ -8,7 +8,6 @@ CarlSAT is developed by Johan Bontes (UCT), Marijn Heule (CMU/Amazon) and Mike W
 
 Optimization problems with complex constraints occur in many contexts, including scheduling / planning, vehicle routing, bin packing, and placement problems. One promising technique for representing and solving integer optimization problems with Boolean constraints is called partial MaxSAT, which is a generalization of Boolean Satisfiability problem to include clauses that must be satisfied ('hard' clauses) and clauses that are not required to be satisfied but have a cost for non-satisifaction ('soft' clauses).
 
-
 We introduce CarlSAT, a novel stochastic local search solver for a subset of partial MaxSAT problems that can be stated in 'pure' form. In pure problems all literals in hard (required) clauses have a single polarity opposite from that of literals in soft (optional) clauses; this simplifies the structure of the problem, allowing for more efficient processing. The solver features native support for boolean cardinality constraints, which occur commonly in MaxSAT problems. This negates the need to encode these constraints into conjunctive normal form, thereby avoiding the geometric expansion in problem size associated with this translation. We introduce a new 'wcard' file format supporting cardinality clauses. Processing cardinality clauses adds a small overhead whereas the smaller problem size makes for much larger savings. Finally, CarlSAT eliminates the clause selection step traditionally used in local search SAT solvers. These innovations result in a solver that outperforms the current state-of-art in local search MaxSAT solving. It can be applied to a large subset of NP-Complete problems, such as set cover and bin packing.
 
 ## Usage
@@ -151,6 +150,7 @@ ezOptionParser.hpp - Remik Ziemlinski's command argument parser
 FilePreprocess.hpp - Parses commandline arguments (and perhaps later file preprocessing)
 HashTable          - A linear probe hashtable and solution store
 murmurhash3.*      - Austin Appleby's original code. I use a simplified version. There to make sure I haven't messed up.
+```
 
 ## `.wcard` file format
 
@@ -220,21 +220,18 @@ LinearLS solver, contact Mike Whalen (mww@amazon.com) to obtain a version of thi
 
 ## Availability
 
-The source code for CarlSAT is available from: .....
+The source code for CarlSAT is available under an Apache 2.0 license at https://github.com/JBontes/CarlSAT2021
 
 ## Todo items
 
 - restarts need to be implemented properly
-- integrate reading equations on the commandline (should work if you make sure there are no spaces)
+- add support for equal_to and not_equal_to cardinality clauses
 - improve the heuristics
 
 ## References
 
-LinearLS: .....
-Loundra: .....
+LinearLS: Cai S, Zhang X. Pure MaxSAT and Its Applications to Combinatorial Optimization via Linear Local Search. in International Conference on Principles and Practice of Constraint Programming 2020 Sep 7 (pp. 90-106). Springer, Cham.   
+https://lcs.ios.ac.cn/~caisw/MaxSAT.html    
 
-## Link to test set used:
-
-........
-
-
+Loundra: Berg, J., Korhonen, T. and Järvisalo, M., Loandra: PMRES Extended with Preprocessing Entering MaxSAT Evaluation 2017. MaxSAT Evaluation 2017, p.13.  
+https://github.com/jezberg/loandra  
