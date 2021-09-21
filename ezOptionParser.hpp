@@ -231,10 +231,17 @@ namespace ez {
             out.push_back(atoi(strings[i].c_str()));
         }
     };
+    
     /* ################################################################### */
     static void StringsToInts(std::vector<std::string*>* strings, std::vector<int>* out) {
         for (int i = 0; i < (long int)strings->size(); ++i) {
             out->push_back(atoi(strings->at(i)->c_str()));
+        }
+    };
+    static void StringsToUints(std::vector<std::string>& strings, std::vector<unsigned>& out) {
+        for (size_t i = 0; i < strings.size(); ++i) {
+            const auto UseDecimal = 10;
+            out.push_back(strtoul(strings[i].c_str(), nullptr, UseDecimal));
         }
     };
     /* ################################################################### */
@@ -951,6 +958,7 @@ namespace ez {
         inline void getDouble(double&);
         inline void getString(std::string&);
         inline void getInts(std::vector<int>&);
+        inline void getUInts(std::vector<unsigned>& out);
         inline void getLongs(std::vector<long>&);
         inline void getULongs(std::vector<unsigned long>&);
         inline void getFloats(std::vector<float>&);
@@ -1146,6 +1154,19 @@ namespace ez {
                 StringsToInts(args[0], &out);
         }
     };
+    /* ################################################################### */
+    //     void OptionGroup::getUInts(std::vector<unsigned>& out) {
+    //     if (!isSet) {
+    //         if (!defaults.empty()) {
+    //             std::vector< std::string > strings;
+    //             SplitDelim(defaults, delim, strings);
+    //             StringsToUints(strings, out);
+    //         }
+    //     } else {
+    //         if (!(args.empty() || args[0]->empty()))
+    //             StringsToUints(args[0], &out);
+    //     }
+    // };
     /* ################################################################### */
     void OptionGroup::getLongs(std::vector<long>& out) {
         if (!isSet) {
