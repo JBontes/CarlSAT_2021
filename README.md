@@ -180,6 +180,7 @@ ezOptionParser.hpp - Remik Ziemlinski's command argument parser
 FilePreprocess.hpp - Parses commandline arguments (and perhaps later file preprocessing)
 HashTable          - A linear probe hashtable and solution store
 murmurhash3.*      - Austin Appleby's original code. I use a simplified version. It's present to make sure I haven't messed up.
+```
 
 ## `.wcard` file format
 
@@ -255,6 +256,7 @@ The source code for CarlSAT is available from: https://github.com/JBontes/CarlSA
 ## References
 
 LinearLS: 
+
 ```
 @inproceedings{cai2020pure,
   title={Pure MaxSAT and Its Applications to Combinatorial Optimization via Linear Local Search},
@@ -264,8 +266,10 @@ LinearLS:
   year={2020},
   organization={Springer}
 }
+```
 
 Loandra:
+
 ```
 @article{berg2019loandra,
   title={Loandra: Core-Boosted Linear Search Entering MaxSAT Evaluation 2019},
