@@ -67,32 +67,37 @@ int PureCMS_t::Get_Nth_sat_lit(const uint32_t cls, const uint32_t n) const {
     if (0 == i) { //it's the first set bit in the current chunk
         if constexpr(satlit) { return _tzcnt_u64( h_SATLiteralBits[cls][chunk].to_ullong()); }
         else {                 return _tzcnt_u64(~h_SATLiteralBits[cls][chunk].to_ullong()); }
+        //    -----------------------------------^
     } else { //i < 0, rewind one chunk
         //https://stackoverflow.com/a/27453505/650492
         if constexpr (satlit) { return _tzcnt_u64(_pdep_u64(1ULL << (lastcount - i),  lastchunk )); }
         else {                  return _tzcnt_u64(_pdep_u64(1ULL << (lastcount - i), ~lastchunk )); }
+        //                                        -----------------------------------^
     }
 }
 
 enum CardKind_t { ck_None, ck_AtLeast, ck_AtMost }; //for now ignore equals, great, lessthan
 
 void PureCMS_t::allocate() {
+    assert(nVars > 0);
+    assert(nClauses > 0);
     int var_mem = nVars + 2; //dummy variable 0 and an extra sentinal
     int cls_mem = nClauses + 1;
-    h_LiteralsInClauses = new int* [cls_mem];
     h_K_atLeast = new uint32_t[cls_mem];                   //cardinality at least
     h_SATLiteralBits = new bitset<64>*[cls_mem];        //bitset with sat bits in card clauses
 
     h_LiteralsInClauseCount = new uint32_t[cls_mem]();
+    h_LiteralsInClauses = new int* [cls_mem];
     h_SatisfiedLitCount = new uint32_t[cls_mem]();
-    s_CriticalVarInSoftClause = new int[cls_mem]();
     h_ClauseWeights = new uint64_t[cls_mem];
     fill_n(h_ClauseWeights, cls_mem, 1);
+
+    s_CriticalVarInSoftClause = new int[cls_mem](); //over allocation. but that's OK
     //vweight = new int[var_mem]();
     v_lits_hard_clause_id = new Occurrence_t* [var_mem];
     v_lits_soft_clause_id = new int* [var_mem];
     //v_lits_pos_hard = new uint32_t* [var_mem];
-    v_lits_hard_neighbor = new int* [var_mem];
+    //v_lits_hard_neighbor = new int* [var_mem];
     v_lits_hard_size = new int[var_mem]();
     v_lits_soft_size = new int[var_mem]();
     v_lits_hard_kcount = new int[var_mem]();
@@ -110,12 +115,13 @@ void PureCMS_t::allocate() {
 
     //valid_score = new int[var_mem];
     //fill_n(valid_score, var_mem, INT_MAX);
-    unsat_in_hard = new int[var_mem];
-    idx_in_unsat_hard = new int[var_mem];
+    // = new int[var_mem]();
+    //idx_in_unsat_hard = new int[var_mem];
+    //fill_n(idx_in_unsat_hard, var_mem, -1);
 
-    unsat_in_soft = new int[var_mem];
-    idx_in_unsat_soft = new int[var_mem];
-    fill_n(idx_in_unsat_soft, var_mem, -1);
+    //unsat_in_soft = new int[var_mem]();
+    //idx_in_unsat_soft = new int[var_mem];
+    //fill_n(idx_in_unsat_soft, var_mem, -1);
 
     tabu_remove = new int[var_mem];
     tabu_list = new int[var_mem];
@@ -136,12 +142,12 @@ void PureCMS_t::freeMemory() {
         delete[] v_lits_hard_clause_id[i];
         delete[] v_lits_soft_clause_id[i];
         //delete[] v_lits_pos_hard[i];
-        delete[] v_lits_hard_neighbor[i];
+        //delete[] v_lits_hard_neighbor[i];
     }
     delete[] v_lits_hard_clause_id;
     delete[] v_lits_soft_clause_id;
     //delete[] v_lits_pos_hard;
-    delete[] v_lits_hard_neighbor;
+    //delete[] v_lits_hard_neighbor;
     delete[] h_LiteralsInClauses;
     delete[] h_SatisfiedLitCount;
     delete[] s_CriticalVarInSoftClause;
@@ -156,10 +162,10 @@ void PureCMS_t::freeMemory() {
     delete[] s_MakeScore;
     delete[] s_BreakScore;
 
-    delete[] unsat_in_hard;
-    delete[] idx_in_unsat_hard;
-    delete[] unsat_in_soft;
-    delete[] idx_in_unsat_soft;
+    //delete[] unsat_in_hard;
+    //delete[] idx_in_unsat_hard;
+    //delete[] unsat_in_soft;
+    //delete[] idx_in_unsat_soft;
     delete[] tabu_remove;
     delete[] tabu_list;
     //delete[] vars_sorted_by_score;
@@ -184,11 +190,10 @@ void PureCMS_t::initParams() {
     s_FalseCount = h_FalseCount = tabu_list_size = 0;
     unit_fixed_weight = 0;
     best_time = 0.0;
-    v_lits_soft_unsat_count = 0;
-    v_lits_hard_unsat_count = 0;
+    //v_lits_soft_unsat_count = 0;
+    //v_lits_hard_unsat_count = 0;
     bound_mod = parameters.LoopLengthPhase12;
     try_num = 50; //BMS in reset
-
 
     try_pick = 1;
 }
@@ -197,6 +202,7 @@ void PureCMS_t::update_best_soln() {
     if (cost < best_cost) {
         best_cost = cost;
         soln->cost = cost;
+        soln->s_FalseCount = s_FalseCount;
         soln->time = Millisecs(StartTime, now());
         soln->hasImproved = true;
         soln->CloneInto(best_soln);
@@ -220,10 +226,10 @@ void PureCMS_t::showSoln(const string& filename) const {
     fout << "c # of SoftClauses: " << sClauseCount << " # SAT: " << SATSoftCount << " # UNSAT " << sClauseCount - SATSoftCount << endl;
     assert(sClauseCount - SATSoftCount >= 0);
     fout << "c # of HardClauses: " << hClauseCount << " all of which are SAT" << endl;
-    fout << "c Solve took " << best_time << "seconds" << endl;
+    fout << "c Solve took " << best_time << "ms" << endl;
     const auto time = std::time(nullptr);
-    fout << "c date YMD-HMS" << std::put_time(std::localtime(&time), " %Y-%m-%d  %H:%M:%S ") << std::endl;
-
+    fout << "c date YMD-HMS" << std::put_time(std::localtime(&time), " %Y-%m-%d  %H:%M:%S ") << endl;
+    fout << "s UNKNOWN \n";
     fout << "o "<< best_cost + unit_fixed_weight << endl;
     fout << "v ";
     for (decltype(nVars) i = 1; i <= nVars; ++i) {
@@ -231,32 +237,30 @@ void PureCMS_t::showSoln(const string& filename) const {
             || (best_soln->State(i) && !lit_in_hClause_is_positive))  { fout << "-"; }
         fout << i << " ";
     }
+    Log(1, "True literals: %i, False literals: %i", best_soln->PopCount(), nVars - best_soln->PopCount());
     fout << endl;
     fout.close();
-    Log(1, "c Time: %.3f s", best_time / 1'000'000);
+    Log(1, "c Time: %.0f ms", best_time);
 }
 
 template <int LogLevel>
-void PureCMS_t::showSoln(bool needVarify) const {
+void PureCMS_t::showSoln(const bool needVarify, const bool showassignment) const {
     if (needVarify && !verify()) {
         cout << "c The soln is wrong." << endl;
         return;
     }
+    cout << "s UNKNOWN\n"; 
     cout << "o " << best_cost + unit_fixed_weight << endl;
-    cout << "v ";
-    if (lit_in_hClause_is_positive) {
-        for (uint32_t i = 1; i <= nVars; ++i) {
-            if (!best_soln->State(i)) { cout << "-"; }
+    if (showassignment) {
+        cout << "v ";
+        for (decltype(nVars) i = 1; i <= nVars; ++i) {
+            if (   (!best_soln->State(i) &&  lit_in_hClause_is_positive)
+                ||  (best_soln->State(i) && !lit_in_hClause_is_positive))  { cout << "-"; }
             cout << i << " ";
         }
-        cout << endl;
-    } else {
-        for (uint32_t i = 1; i <= nVars; ++i) {
-            if (best_soln->State(i)) { cout << "-"; }
-            cout << i << " ";
-        }
-        cout << endl;
     }
+    Log(1, "True literals: %i, False literals: %i", best_soln->PopCount(), nVars - best_soln->PopCount());
+    Log(1, "Intermediate: Score = %llu, True literals: %i, False literals: %i", soln->cost, soln->PopCount(), nVars - soln->PopCount());
     Log(1, "c Time: %.3f s", best_time / 1'000'000);
 }
 
@@ -313,8 +317,35 @@ std::string nexttoken(char const * text) {
     return result;
 }
 
+void PureCMS_t::InitClauseLengthCorrections() {    
+    s_ClauseLengthCorrections = new int[s_LongestClause + 1];
+    //todo: make this selectable
+    for (decltype(s_LongestClause) i = 1; i <= s_LongestClause; i++) {
+        auto LengthCorr = s_LongestClause - (i-1);
+        LengthCorr = 1 + log2(LengthCorr);
+        s_ClauseLengthCorrections[i] = LengthCorr;
+    }
+}
+
+
 bool PureCMS_t::build(const Parameters_t& parameters) {
     this->parameters = parameters;
+    auto hasInputFile = false;
+    hasResumed = false;
+    if (parameters.InputFilename.length() > 0) {
+        //see if this file exists
+        namespace fs = std::filesystem;
+        std::filesystem::path f{ parameters.InputFilename };
+        hasInputFile = (std::filesystem::exists(f));
+    }
+    if (hasInputFile) { 
+        if (read_state()) { 
+            hasResumed = true;
+            return true; 
+        }
+     }  //<<<<<<<<<<<<<<<<<<  don't read problem file if we are resuming.
+
+
     ifstream fin(parameters.Filename);
     if (!fin) {
         cout << "c file " << parameters.Filename << " not found" << endl;
@@ -419,13 +450,7 @@ bool PureCMS_t::build(const Parameters_t& parameters) {
     } //for nClauses
     //correct the soft clause indexes, so that grow up again
     //we now know the number of hard and soft clauses, so we can point the s_unsat list to the correct positions
-    s_ClauseLengthCorrections = new int[s_LongestClause + 1];
-    //todo: make this selectable
-    for (decltype(s_LongestClause) i = 1; i <= s_LongestClause; i++) {
-        auto LengthCorr = s_LongestClause - (i-1);
-        LengthCorr = 1 + log2(LengthCorr);
-        s_ClauseLengthCorrections[i] = LengthCorr;
-    }
+    InitClauseLengthCorrections();
 
     s_LiteralsInClauseCount = &s_LiteralsInClauseCount[-sClauseCount];
     s_LiteralsInClauses = &s_LiteralsInClauses[-sClauseCount];
@@ -470,12 +495,12 @@ bool PureCMS_t::build(const Parameters_t& parameters) {
         v_lits_hard_clause_id[i] = new Occurrence_t[v_lits_hard_size[i] + 1];
         v_lits_soft_clause_id[i] = new int[v_lits_soft_size[i] + 1]();
         //v_lits_pos_hard[i] =       new uint32_t[hClauseCount]();
-        v_lits_hard_neighbor[i] =  new int[v_lits_hard_size[i] + 1];
+        //v_lits_hard_neighbor[i] =  new int[v_lits_hard_size[i] + 1];
     }
 
 
     {
-        memset(v_lits_hard_size, 0, sizeof(int) * (nVars + 1));
+        memset(v_lits_hard_size, 0, sizeof(int) * (nVars + 1));  //reset it so that we can use it as a counter here
         for (uint32_t cls = 0; cls < hClauseCount; ++cls) {
             auto cls_sz = h_LiteralsInClauseCount[cls];
             for (uint32_t j = 0; j < cls_sz; ++j) {
@@ -485,7 +510,7 @@ bool PureCMS_t::build(const Parameters_t& parameters) {
             }
         }
 
-        memset(v_lits_soft_size, 0, sizeof(int) * (nVars + 1));
+        memset(v_lits_soft_size, 0, sizeof(int) * (nVars + 1)); //reset it so we can use it as a counter here
         for (auto cls = 0; cls < sClauseCount; ++cls) {
             auto cls_sz = s_LiteralsInClauseCount[cls];
             for (uint32_t j = 0; j < cls_sz; ++j) {
@@ -551,7 +576,7 @@ void PureCMS_t::unsat_soft(const int var) {
             s_FalseCount++;
             //making any of the vars in this clause will revive this clause, update the sscores
             //1. The clause went from critical to false, remove the critical var from the scoring
-            assert(var == s_CriticalVarInSoftClause[cls]);
+            assert(isEqual(var, s_CriticalVarInSoftClause[cls]));
             ChangeSoftBreak(var, -SoftClauseWeight(cls), -s_ClauseWeights[cls]);
             assert(s_BreakScore[var] >= 0);
             //2. flipping any var in this clause will make it, adding the clause cost
@@ -877,9 +902,9 @@ void PureCMS_t::update_clause_weight() {
 
 //Free move, make a soft clause without breaking any hard clauses
 void PureCMS_t::reset_redundent_var_unsatSoft() {
-    for (auto i = 0; i < v_lits_soft_unsat_count; i++) {
-        const auto test_var = unsat_in_soft[i];
-        if (h_BreakScore[test_var] == 0) {
+    for (auto item: SoftSortedScores.vars_by_score) {
+        const auto test_var = item.var;
+        if (0 == h_BreakScore[test_var]) {
             reset(test_var);
         }
     }
@@ -933,7 +958,6 @@ void PureCMS_t::OuterRestart() {
 
 }
 
-
 //------------------------------------------
 // Initialize a new solution for the inner restart
 void PureCMS_t::InnerRestart() {
@@ -941,29 +965,459 @@ void PureCMS_t::InnerRestart() {
 
 }
 
+void PureCMS_t::write_scores() {
+    std::ofstream file;
+    file.open("unsat_scores.csv", std::ios::trunc);
+    std::stringstream lines;
+    lines << "var,score\n";
+    for (auto item: SoftSortedScores.vars_by_score) {
+        lines << item.var << "," << item.score << std::endl;
+    }
+    file << lines.str();
+    std::cout << lines.str();
+    file.close();
+}
 
+
+class my_ofstream: public std::ofstream {
+public:
+ 
+    template <typename T>
+    void put(const T& data) {
+        write((char*)&data, sizeof(T));
+    }
+};
+
+class my_ifstream: public std::ifstream {
+public:
+    template <typename T>
+    void get(T& data) {
+        read((char*)&data, sizeof(T));
+    }
+};
+
+template <int LogLevel>
+bool PureCMS_t::write_state() const {
+    const std::string& filename = parameters.OutputFilename;
+    my_ofstream file;
+    file.open(filename, std::ios::out | std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) { 
+        printf("c Error: File \"%s\" cannot be created\n", filename.c_str());  
+        return false;
+    }
+    file.put("carlsat1"); //header for sanity check
+    //file.put(rng); //keep our rng
+    file.put(nVars);
+    file.put(nClauses);
+    file.put(hClauseWeight);
+
+    file.put(best_cost);
+    file.put(cost);
+    assert(verify());
+    best_soln->WriteToStream(file);
+#ifdef _DEBUG
+    Log(1, "Best assignment has cost: %llu, Popcount: %i, Hash = %i\n", best_soln->cost, best_soln->PopCount(), best_soln->CalculateHash());
+#endif
+
+    assert(isEqual(soln->cost, cost));
+    soln->FlipCount = this->flipcount;
+    //soln->CriticalClauseCount = //not currently used
+    soln->WriteToStream(file);
+#ifdef _DEBUG
+    auto diffsoln = Atom_t::NewHostAtom(nVars, soln->Strategy);
+    soln->CloneInto(diffsoln);
+    *diffsoln ^= *best_soln;
+    Log(0, "Intermediate assignment has cost: %llu, PopCount: %i, Diff popcount = %i, Hash = %i\n", soln->cost, soln->PopCount(), diffsoln->PopCount(), soln->CalculateHash());
+    free(diffsoln);
+#endif
+    //First write all the hard clauses, these have no weight
+    file.put(sClauseCount);
+    file.put(hClauseCount);
+    assert(hClauseCount + sClauseCount == nClauses);
+    file.put(h_FalseCount);
+
+    auto check = 0xDEADBEEF;
+    file.put(check);
+    decltype(h_FalseCount) h_FalseCountCheck = 0;
+    for (auto cls = 0; cls < hClauseCount; cls++) {
+        file.put(h_LiteralsInClauseCount[cls]);
+        file.put(h_SatisfiedLitCount[cls]);
+        file.put(h_ClauseWeights[cls]); 
+        file.put(h_K_atLeast[cls]);
+        h_FalseCountCheck += (h_SatisfiedLitCount[cls] < h_K_atLeast[cls]);
+        file.write((char*)h_LiteralsInClauses[cls], sizeof(int) * h_LiteralsInClauseCount[cls]);
+        //also write out the current assignment to the cardinality clause
+        const auto chunksize = (h_LiteralsInClauseCount[cls] + 63)/64;
+        file.write((char*)h_SATLiteralBits[cls], sizeof(int64_t) * chunksize);
+    }
+    assert(isEqual(h_FalseCount, h_FalseCountCheck));
+
+    file.put(0xCAFEBABE); //make sure data is correctly aligned
+
+    //soft clauses + weights
+    file.put(s_LongestClause);
+    file.put(s_FalseCount); decltype(s_FalseCount) s_FalseCountCheck = 0;
+    decltype(cost) SumClauseWeights = 0;
+    decltype(cost) CheckCost = 0;
+    for (auto cls = 0; cls < sClauseCount; cls++) {
+        file.put(s_LiteralsInClauseCount[cls]);
+        file.put(s_SatisfiedLitCount[cls]);
+        file.put(s_ClauseWeights[cls]);
+        SumClauseWeights += s_ClauseWeights[cls];
+        if (0 == s_SatisfiedLitCount[cls]) { CheckCost += s_ClauseWeights[cls]; }
+        file.put(s_CriticalVarInSoftClause[cls]);
+        s_FalseCountCheck += (isEqual(0u, s_SatisfiedLitCount[cls]));
+        file.write((char*)s_LiteralsInClauses[cls], sizeof(int) * s_LiteralsInClauseCount[cls]);
+    }
+    file.put(SumClauseWeights);
+#ifdef _DEBUG
+    printf("c write: Sum of clause weights = %llu\n", SumClauseWeights);
+#endif
+    assert(isEqual(CheckCost, soln->cost));
+    assert(isEqual(CheckCost, cost));
+    assert(isEqual(s_FalseCount, s_FalseCountCheck));
+    file.put(0x8BADF00D); //check alignment at various locations
+
+    //Variable occurrences (which var occurs in what clause?)
+    //file.put(v_lits_hard_unsat_count);
+    //file.put(v_lits_soft_unsat_count);
+    for (auto var = 1; var <= nVars; var++) { //the hard size will be recreated from the source data.
+         //file.put(v_lits_hard_kcount[var]);
+         //file.put(v_lits_hard_size[var]); //# of hard clauses a var occurs in.
+         file.write((char*)v_lits_hard_clause_id[var], sizeof(Occurrence_t) * v_lits_hard_size[var]);
+         file.write((char*)v_lits_soft_clause_id[var], sizeof(int) * v_lits_soft_size[var]);
+    }
+
+    file.put(0xDEADBABE); //including at the end.
+    
+    
+
+    file.close();
+    Log(2, "c Written assignment with cost %llu\n", cost);
+    return true;
+}
+
+bool PureCMS_t::read_state() {
+    const string filename = parameters.InputFilename;
+    my_ifstream file;
+    file.open(filename, std::ios::in | std::ios::binary);
+        if (!file.is_open()) { 
+        printf("c Warning: File \"%s\"does not exist, I'll try and read the problem file\n", filename.c_str());  
+        return false;
+    }
+    char header[sizeof("carlsat1")];
+    file.read(header, sizeof(header));
+    if (strcmp("carlsat1", header) != 0) { 
+        printf("c Fatal Error: File \"%s\" is not a valid CarlSAT state file!\n", filename.c_str());
+        exit(-1); //Fatal error: terminate the program.  
+        //return false;
+    }
+    //decltype(rng) dummyrng(0);
+    //file.get(dummyrng);   //keep our RNG
+    file.get(nVars);
+    file.get(nClauses);
+    file.get(hClauseWeight);
+    allocate();
+    initParams();
+    file.get(best_cost); 
+    file.get(cost);
+    //const auto olddegree = degree;
+    //const auto oldnVars = nVars;
+    best_soln->ReadFromStream(file);
+    assert(isEqual(best_soln->cost, best_cost));
+    assert(isEqual(best_soln->CalculateHash(), best_soln->Hash));
+    soln->ReadFromStream(file);
+    assert(isEqual(soln->cost, cost));
+    assert(isEqual(soln->CalculateHash(), soln->Hash));
+
+    file.get(sClauseCount);
+    file.get(hClauseCount);
+    assert(hClauseCount + sClauseCount == nClauses);
+    file.get(h_FalseCount);
+    uint32_t check = 0;
+    file.get(check);
+    assert(isEqual(0xDEADBEEF, check));
+    assert(h_FalseCount >= 0 && h_FalseCount <= hClauseCount);
+    for (auto cls = 0; cls < hClauseCount; cls++) {
+        file.get(h_LiteralsInClauseCount[cls]); assert(h_LiteralsInClauseCount[cls] > 0);
+        file.get(h_SatisfiedLitCount[cls]); 
+        assert(h_LiteralsInClauseCount[cls] <= h_LiteralsInClauseCount[cls]);
+        file.get(h_ClauseWeights[cls]); 
+        file.get(h_K_atLeast[cls]);
+        assert(h_K_atLeast[cls] <= h_LiteralsInClauseCount[cls]);
+        h_LiteralsInClauses[cls] = new int[h_LiteralsInClauseCount[cls] + 1];
+        file.read((char*)h_LiteralsInClauses[cls], sizeof(int) * h_LiteralsInClauseCount[cls]);
+        //also write out the current assignment to the cardinality clause
+        const auto ChunkCount = (h_LiteralsInClauseCount[cls] + 63) / 64; 
+        h_SATLiteralBits[cls] = new bitset<64>[ChunkCount]();
+        file.read((char*)h_SATLiteralBits[cls], sizeof(int64_t) * ChunkCount);
+    } //for cls
+
+
+
+
+    file.get(check);
+    assert(isEqual(0xCAFEBABE, check));
+    
+    //soft clauses + weights
+    file.get(s_LongestClause);
+    InitClauseLengthCorrections();
+    const auto olds_ClauseLengthCorrections = s_ClauseLengthCorrections;
+    file.get(s_FalseCount);
+    
+    s_LiteralsInClauseCount = &h_LiteralsInClauseCount[hClauseCount];
+    s_LiteralsInClauses = &h_LiteralsInClauses[hClauseCount];
+    s_SatisfiedLitCount = &h_SatisfiedLitCount[hClauseCount];
+    s_ClauseWeights = &h_ClauseWeights[hClauseCount];
+    decltype(cost) SumClauseWeights = 0;
+    decltype(cost) CheckCost = 0;
+    for (auto cls = 0; cls < sClauseCount; cls++) {
+        file.get(s_LiteralsInClauseCount[cls]);
+        file.get(s_SatisfiedLitCount[cls]);
+        assert(s_SatisfiedLitCount[cls] <= s_LiteralsInClauseCount[cls]);
+        file.get(s_ClauseWeights[cls]);
+        SumClauseWeights += s_ClauseWeights[cls];
+        if (0 == s_SatisfiedLitCount[cls]) { CheckCost += s_ClauseWeights[cls]; }
+        file.get(s_CriticalVarInSoftClause[cls]);
+        s_LiteralsInClauses[cls] = new int[s_LiteralsInClauseCount[cls] + 1];
+        file.read((char*)s_LiteralsInClauses[cls], sizeof(int) * s_LiteralsInClauseCount[cls]);
+    }
+    decltype(cost) SollSumClauseWeights;
+    file.get(SollSumClauseWeights);
+#ifdef _DEBUG
+    printf("c read: Sum of clause weights = %llu, Should be: %llu, difference: %llu\n", SumClauseWeights, SollSumClauseWeights, SumClauseWeights - SollSumClauseWeights);
+#endif
+    assert(isEqual(CheckCost, cost));
+    assert(isEqual(SumClauseWeights, SollSumClauseWeights));
+
+
+    file.get(check);
+    assert(0x8BADF00D == check);
+
+    auto d = const_cast<int*>(degree);
+    total_hard_lits = 0;
+    for (uint32_t i = 0; i < hClauseCount; ++i) {
+        const auto ClauseLength = h_LiteralsInClauseCount[i];
+        for (uint32_t j = 0; j < ClauseLength; ++j) {
+            const auto var = h_LiteralsInClauses[i][j];
+
+            d[var] += ClauseLength - 1;
+            v_lits_hard_size[var]++;
+            v_lits_hard_kcount[var] += h_K_atLeast[i];  //K_atLeast denotes the #of hard clauses merged into one
+        }
+        total_hard_lits += h_LiteralsInClauseCount[i];
+    }
+
+    total_soft_lits = 0;
+    for (decltype(sClauseCount) i = 0; i < sClauseCount; ++i) {
+        const auto ClauseLength = s_LiteralsInClauseCount[i];
+        for (uint32_t j = 0; j < ClauseLength; ++j) {
+            const auto var = s_LiteralsInClauses[i][j];
+            d[var] += ClauseLength - 1;
+            v_lits_soft_size[var]++;
+        }
+        total_soft_lits += ClauseLength;
+    }
+
+
+    //Variable occurrences (which var occurs in what clause?)
+    //file.get(v_lits_hard_unsat_count);
+    //file.get(v_lits_soft_unsat_count);
+    for (auto var = 1; var <= nVars; var++) {
+        //file.get(v_lits_hard_kcount[var]);
+        //file.get(v_lits_hard_size[var]); //# of hard clauses a var occurs in.
+        v_lits_hard_clause_id[var] = new Occurrence_t[v_lits_hard_size[var] + 1];
+        file.read((char*)v_lits_hard_clause_id[var], sizeof(Occurrence_t) * v_lits_hard_size[var]);
+#ifdef _DEBUG
+        for (auto lit = 0; lit < v_lits_hard_size[var]; lit++) {
+            auto occ = v_lits_hard_clause_id[var][lit];
+            const auto found = h_LiteralsInClauses[occ.cls][occ.lit_index] == var;
+            if (!found) { 
+                assert(found); 
+            }
+        }
+#endif
+
+        v_lits_soft_clause_id[var] = new int[v_lits_soft_size[var] + 1];
+        file.read((char*)v_lits_soft_clause_id[var], sizeof(int) * v_lits_soft_size[var]);
+#ifdef _DEBUG
+        for (auto lit = 0; lit < v_lits_soft_size[var]; lit++) {
+            const auto cls = v_lits_soft_clause_id[var][lit];
+            assert(cls >= 0 && cls < sClauseCount);
+            auto found = false;
+            for (auto idx = 0; idx < s_LiteralsInClauseCount[cls]; idx++) {
+                found = isEqual(s_LiteralsInClauses[cls][idx], var);
+                if (found) { break; }
+            }
+            if (!found) { 
+                assert(found); 
+            }
+        }
+#endif
+    }
+
+    file.get(check);
+    assert(0xDEADBABE == check); //must be the last item in the file
+    file.close();
+
+
+    //Update the soft sorted scores
+    SoftSortedScores.clear();
+    HardSortedScores.clear();
+    assert(SoftSortedScores.count() == 0);
+    assert(HardSortedScores.count() == 0);
+    //Calculate the make and break scores for variables
+    for (auto var = 1; var <= nVars; var++) {
+        //Calculate cum cost of unsat soft clauses
+        const auto isHardSAT = soln->State(var);
+        const auto isSoftSAT = !isHardSAT;
+        
+        auto s_Cost = 0;
+        auto s_PlainCost = 0;
+        for (auto idx = 0; idx < v_lits_soft_size[var]; idx++) {
+            const auto cls = v_lits_soft_clause_id[var][idx];
+            const auto isUNSAT = (0 == s_SatisfiedLitCount[cls]);
+            const auto isCritical = ((1 == s_SatisfiedLitCount[cls]) && (isEqual(var, s_CriticalVarInSoftClause[cls])));
+            assert(!isCritical || isEqual(s_CriticalVarInSoftClause[cls], var));
+#ifdef _DEBUG
+            if (isUNSAT)    { assert(!isCritical); }
+            if (isCritical) { assert(!isUNSAT);    }
+            if (isSoftSAT)  { assert(!isUNSAT);    }
+            if (!isSoftSAT) { assert(!isCritical); }
+#endif
+            const auto soft_cost = SoftClauseWeight(cls);
+            const auto plain_cost = s_ClauseWeights[cls];
+            //if the var is SAT any clause containing it will be SAT, conversely ...
+            //if the var is UNSAT, it can never be the critical variable in a clause
+            s_Cost += soft_cost * (isUNSAT || isCritical); //don't worry, it can only be one or the other inside one loop.
+            s_PlainCost += plain_cost * (isCritical); //we only track the plain cost for critical clauses 
+            assert(!(isUNSAT && isCritical));
+        }
+        auto softmakes = const_cast<int64_t*>(s_MakeScore);
+        softmakes[var] = s_Cost * (!isSoftSAT);
+
+        auto softbreaks = const_cast<int64_t*>(s_BreakScore);
+        softbreaks[var] = s_Cost * (isSoftSAT); 
+        assert(((softmakes[var] * softbreaks[var]) == 0) && ((softmakes[var] + softbreaks[var]) == s_Cost));
+        
+        assert(isSoftSAT || (0 == s_PlainCost)); //only track plaincost for critical clauses.
+        auto plainbreaks = const_cast<int64_t*>(this->s_PlainBreakScore);
+        plainbreaks[var] = s_PlainCost * (isSoftSAT);
+        
+
+        //Check for critical hard clauses
+        auto h_Cost = 0;
+        for (auto idx = 0; idx < v_lits_hard_size[var]; idx++) {
+            const auto cls = v_lits_hard_clause_id[var][idx].cls;
+            const auto isCritical = isEqual(h_K_atLeast[cls], h_SatisfiedLitCount[cls]) && isHardSAT;
+            const auto UnderSATDegree = (h_K_atLeast[cls] - h_SatisfiedLitCount[cls]);
+            const auto isUnderSatisfied = (!isHardSAT) && (UnderSATDegree > 0);
+            h_Cost += (isCritical * h_ClauseWeights[cls]) + (isUnderSatisfied * UnderSATDegree * h_ClauseWeights[cls]);
+            assert(h_ClauseWeights[cls] > 0); 
+            assert(isCritical + isUnderSatisfied < 2);
+        }
+        auto hardbreaks = const_cast<int64_t*>(h_BreakScore);
+        hardbreaks[var] = h_Cost * isHardSAT;
+        auto hardmakes = const_cast<int64_t*>(h_MakeScore);
+        hardmakes[var] = h_Cost * (!isHardSAT); 
+        assert((hardmakes[var] + hardbreaks[var]) == h_Cost);
+        assert(!(hardmakes[var] > 0 && (hardbreaks[var] > 0)));       
+        if (!isSoftSAT) { SoftSortedScores.add(var, rscore<make_soft>(var)); }
+        else { HardSortedScores.add(var, rscore<repair_hard>(var)); }
+    } //for var
+
+    
+#ifdef _DEBUG
+    //for (auto var = 0; var <= nVars; var++) {
+        //assert(isEqual(unsat_in_soft[var], 0));
+        //assert(isEqual(idx_in_unsat_soft[var], -1));
+        //assert(isEqual(unsat_in_hard[var], 0));
+        //assert(isEqual(idx_in_unsat_hard[var], -1));
+        //(isEqual(critical_in_hard[var], 0));
+        //assert(isEqual(idx_in_critical_hard[var], 0));
+    //}
+#endif
+    //update unsat_in_soft
+    // {
+    //     auto idx = 0;
+    //     for (auto item: SoftSortedScores.vars_by_score) {
+    //         if (-1 == idx_in_unsat_soft[item.var]) {
+    //             assert(isEqual(unsat_in_soft[idx], 0));
+    //             unsat_in_soft[idx] = item.var;
+    //             idx_in_unsat_soft[item.var] = idx++;
+    //         }
+    //     }
+    //     //v_lits_soft_unsat_count = idx;
+    //     assert(isEqual(SoftSortedScores.count(), uint32_t(idx))); //SoftSortedScores does not have duplicates
+    //     //assert(isEqual(v_lits_hard_unsat_count, 0)); //because we have a valid assignment
+    // }
+#ifdef _DEBUG
+    {
+        //auto idx = 0;
+        for (auto cls = 0; cls < hClauseCount; cls++) {
+            const auto OverSATDegee = h_SatisfiedLitCount[cls] - h_K_atLeast[cls];
+            assert(OverSATDegee >= 0); //a valid solution cannot have falsified hard clauses
+            //update critical hard vars, this is not currently used by this version, but best to put it in now.
+            // if (0 == OverSATDegee) { //Clause is critical
+            //     for_each_sat_lit<true>(cls, [&idx, cls, this](const int LitIndex) {
+            //         const auto CurrentVar = h_LiteralsInClauses[cls][LitIndex];
+            //         if (idx_in_critical_hard[CurrentVar] != -1) {  //prevent duplicates in the list
+            //             this->critical_in_hard[idx] = CurrentVar;
+            //             idx_in_critical_hard[CurrentVar] = idx++;
+            //         }
+            //     }); //for every satisfied literal        
+            // } //if isCritical
+        } //for
+    }
+#endif
+    best_cost = best_soln->cost;
+    cost = soln->cost;
+    
+#ifdef _DEBUG
+    assert(verify()); 
+#endif
+    //we read in the data for the current solution, but we need the best_soln, flip the variables needed to make that happen
+    InterpretSoln(best_soln);
+#ifdef _DEBUG
+    //Make sure all data is internally consistent
+    assert(verify());
+    assert(0 == h_FalseCount);
+    assert(isEqual(cost, best_soln->cost));
+#endif
+    const int LogLevel = 2;
+    Log(2, "Restart from previously saved assignment with cost %llu\n", cost);
+    return isEqual(cost, best_soln->cost);
+}
+
+template <int LogLevel>
+bool PureCMS_t::TrySaveBestSoln() {
+    if (h_FalseCount != 0) { return false; }  
+    //else { //if all hard clauses satisfied
+    reset_redundent_var_unsatSoft();  //make free soft clauses
+    update_best_soln(); //save solution if it's better
+    Log(2, "new cost after " _lli_ " flips (%.3f secs) is " _lli_ "", flipcount, float(Millisecs(StartTime, now()))/1000.0f, cost);
+    return true;
+}
 
 //-----------------------------------------------------------------
 template <int LogLevel>
 void PureCMS_t::doLS() {
     auto cc_tabu = true;
     //auto cc_tabu = false;
-    //StartTime = now();
+    StartTime = now();
     auto EndTime = StartTime;
     int64_t remainingflips = parameters.LoopLengthPhase12;
     flipcount = 0;
+    auto LoopCount = 0;
+    auto MaxPhaseIFlips = 0;
     auto phaseI_maxloops = parameters.StartPhase1Flips;
     do { //todo: run until timeout
         //Phase 0, see if we have free moves
-        if (h_FalseCount == 0) { //if all hard clauses satisfied
-
-            reset_redundent_var_unsatSoft();  //make free soft clauses
-            update_best_soln(); //save solution if it's better
+        if (TrySaveBestSoln<0>()) { //don't log, we'll do that more verbosely below
             no_impr = 0; //reset the improvement counter
             bound_mod = parameters.LoopLengthPhase12;
+            phaseI_maxloops = parameters.StartPhase1Flips; 
             Log(2, "new cost after " _lli_ " flips (%.3f secs) is " _lli_ ", phaseI_flips = %i", flipcount, float(Millisecs(StartTime, now()))/1000.0f, cost, phaseI_maxloops);
-            phaseI_maxloops = parameters.StartPhase1Flips;
-
         } else if (no_impr > bound_mod) {
             //Cache the current best solution
             //Get a new initialization
@@ -974,6 +1428,7 @@ void PureCMS_t::doLS() {
             phaseI_maxloops += parameters.IncreasePhase1Flips;
             TrySaveBestToCache<LogLevel>(phaseI_maxloops);
             DoRestart();
+            MaxPhaseIFlips = std::max(MaxPhaseIFlips, phaseI_maxloops);
         }
 
         //Phase I
@@ -992,6 +1447,10 @@ void PureCMS_t::doLS() {
             phaseI_loopcount *= 2.0f;//1.2f;
             remainingflips--;
             flipcount++;
+            if (flipcount >= parameters.maxgens) {
+                write_scores();
+                return;
+            }
             no_impr++;
         } //while
 
@@ -1006,12 +1465,14 @@ void PureCMS_t::doLS() {
             //if ( ! ScoreIsCloseEnough(expected_cost, best_cost, parameters.scoremargin_percentage)) { break; }
             if (expected_cost >= /* >, no too many repeated states */ best_cost) { break; }
             set(flip_var);
+#ifdef _DEBUG
             if (0 == SoftSortedScores.last().var) {
                 assert(0 != SoftSortedScores.last().var || SoftSortedScores.count() == 0);
             }
             if (expected_cost != cost) {
                 assert(expected_cost == cost);
             }
+#endif
             remainingflips--;
             flipcount++;
             no_impr++;
@@ -1020,14 +1481,18 @@ void PureCMS_t::doLS() {
         if (cc_tabu) { clear_tabu(); }
         step++;
         EndTime = now();
-    } while (Seconds(StartTime, EndTime) < parameters.TimeOutInSecs);
-    Log(0, "time taken = %i s\n", Seconds(StartTime, EndTime));
+        LoopCount++;
+    } while (Millisecs(StartTime, EndTime) < parameters.TimeOutInMillisecs);
+    soln->cost = this->cost;
+    soln->s_FalseCount = this->s_FalseCount;
+    soln->time = Millisecs(StartTime, now());
+    Log(0, "Loops performed: %i, MaxPhaseIFlips = %i, time taken = %llu ms\n", LoopCount, MaxPhaseIFlips, Millisecs(StartTime, EndTime));
 }
 
 template <int LogLevel>
 void PureCMS_t::TrySaveBestToCache(const int phaseI_maxloops) { //todo: not yet implemented, cache only ever contains 1 item.
     if (soln->hasImproved) {
-        LogIf(1, LogLevel < 2, "new cost after " _lli_ " flips (%.3f secs) is " _lli_ ", phaseI_flips = %i", flipcount, best_soln->time/1000.0f, best_soln->cost, phaseI_maxloops);
+        LogIf(1, LogLevel < 2, "new cost after " _lli_ " flips (%.0f ms) is " _lli_ ", phaseI_flips = %i", flipcount, best_soln->time, best_soln->cost, phaseI_maxloops);
         const auto cache_id = Cache->add(this->best_soln).Index();
         switch (cache_id) {
             case duplicate: printf("c item with cost " _lli_ " is duplicate\n", best_soln->cost); break;
@@ -1056,22 +1521,76 @@ void PureCMS_t::DoRestart() { //todo: implement restarts (either randomly, or fr
     }
 }
 
-void PureCMS_t::InterpretSoln(const Atom_t* CachedSoln) {
-    *soln ^= *CachedSoln; //first store the xor in the current solution, we'll overwrite it later
+void PureCMS_t::InterpretSoln(Atom_t* CachedSoln) {
+#ifdef _DEBUG
+    Atom_t* DebugSoln = Atom_t::NewHostAtom(soln->VarCount+2, parameters.Strategy); 
+    CachedSoln->CloneInto(DebugSoln);
+    const auto SollHash = DebugSoln->CalculateHash();
+    assert(SollHash == CachedSoln->Hash);
+    *DebugSoln ^= *soln; //the population count should now be 0, because they are equal.
+    *DebugSoln ^= *soln;
+    assert(DebugSoln->CalculateHash() == CachedSoln->CalculateHash());
+#endif
+    assert(isEqual(cost, soln->cost));
+    *CachedSoln ^= *soln; //first store the xor in the current solution, we'll overwrite it later
     //every 1 bit in the soln needs to be flipped.
     //soln[i] ^ cachedsoln[i] will give us the original state back, but we only look at soln[i]==1, so !cachedsoln[i] == old[i].
     //we reuse the code for stepping through cardinality bitsets
-    const auto FlipCount = soln->PopCount();
+    const auto FlipCount = CachedSoln->PopCount();
     auto Index = -1;
-    const auto LocateDifferences = true;
-    for (uint32_t dummy = 0; dummy < FlipCount; dummy++) {
-        Index = NextSetBit<LocateDifferences>(soln->AsBitset(), Index);
-        const auto OldState = !(*CachedSoln)[Index];
+    const auto LocateDifferences = true; //all the differences are 1's in CachedSoln
+    for (auto i = 0; i < FlipCount; i++) {
+        Index = NextSetBit<LocateDifferences>(CachedSoln->AsBitset(), Index);
+        const auto OldState = (*soln)[Index];
         if (OldState) { reset(Index); }
         else { set(Index); }
+#ifdef _DEBUG
+        assert(DebugSoln->State(Index) == soln->State(Index));
+#endif
     }
+#ifdef _DEBUG
+    
+    *DebugSoln ^= *soln;
+    const auto DiffCount = DebugSoln->PopCount();
+    assert(0 == DiffCount);
+    decltype(cost) SollCost = 0;
+    decltype(s_FalseCount) SollFalseCount = 0;
+    for (auto cls = 0; cls < sClauseCount; cls++) {
+        if (0 == s_SatisfiedLitCount[cls]) {
+            SollFalseCount++;
+            SollCost += s_ClauseWeights[cls];
+        }
+    }
+    assert(isEqual(cost, SollCost));
+    assert(isEqual(s_FalseCount, SollFalseCount));
+    assert(0 == h_FalseCount);
+#endif
     //Now that all the internal state matches the cache...
-    CachedSoln->CloneInto(soln); //...overwrite our soln with the cached solution.
+    //CachedSoln->CloneInto(soln); //...overwrite our soln with the cached solution.
+    assert(isEqual(cost, CachedSoln->cost));
+    /*
+        int64_t FlipCount;
+        int CriticalClauseCount;
+        mutable int Hash;
+        bool hasImproved;
+        uint32_t AncestorID;
+        Strategy_t Strategy;
+    */
+    soln->FlipCount = CachedSoln->FlipCount;
+    soln->CriticalClauseCount = CachedSoln->CriticalClauseCount;
+    soln->cost = cost;
+    soln->s_FalseCount = s_FalseCount;
+    soln->time = CachedSoln->time;
+#ifdef _DEBUG
+    assert(SollHash == soln->CalculateHash());
+#endif
+    assert(soln->CalculateHash() == CachedSoln->Hash);
+    soln->Hash = CachedSoln->Hash;
+    soln->hasImproved = false;
+    soln->AncestorID = CachedSoln->AncestorID;
+    soln->Strategy = CachedSoln->Strategy; 
+    //save the state into best soln. This is esp. important if best_soln == CachedSoln, because we cleared out CachedSoln!
+    soln->CloneInto(best_soln);  
 }
 
 
@@ -1096,15 +1615,68 @@ bool PureCMS_t::verify() const {
                 sat = (++SatCount >= h_K_atLeast[cls]);
                 if (sat) { break; }
             }
-            sat |= (0 == h_K_atLeast[cls]);
         }
+        sat |= (0 == h_K_atLeast[cls]);
         if (!sat) {
             Log(0, "Solution is not valid, hard clause %i has satcount %i, needs at least %i", cls, SatCount, h_K_atLeast[cls]);
             result = false;
-            break;
+            return result;
         }
     }
+#ifdef _DEBUG
+    decltype(h_FalseCount) CheckHFalseCount = 0;
+    auto DoubleCheckHFalseCount = h_FalseCount;
+    for (auto cls = 0; cls < hClauseCount; cls++) {
+        //Check to see if the SATLiteralBits are set correctly.
+        auto CheckSATCount = h_SatisfiedLitCount[cls];
+        if (CheckSATCount < h_K_atLeast[cls]) { CheckHFalseCount++; }
+        auto sat = false;
+        uint32_t SatCount = 0;
+        for (auto lit = 0; lit < h_LiteralsInClauseCount[cls]; lit++) {
+            const auto SATLitState = HardLiteralBit(cls, lit);
+            CheckSATCount -= SATLitState;
+            const auto CurrentVar = h_LiteralsInClauses[cls][lit];
+            if (soln->State(CurrentVar)) {
+                sat = (++SatCount >= h_K_atLeast[cls]);
+            }
+            assert(CurrentVar > 0 && CurrentVar <= nVars);
+            const auto VarState = soln->State(CurrentVar);
+            assert(SATLitState == VarState);
+        }
+        sat |= (0 == h_K_atLeast[cls]);
+        if (!sat) { DoubleCheckHFalseCount--; }
+        assert(0 == CheckSATCount);    
+    } //for cls
+    assert(isEqual(CheckHFalseCount, h_FalseCount));
+    assert(0 == DoubleCheckHFalseCount);
+
+    decltype(cost) check_sum = 0;
+    for (auto cls = 0; cls < sClauseCount; cls++) {
+        const auto CritVar = s_CriticalVarInSoftClause[cls];
+        assert(s_SatisfiedLitCount[cls] <= s_LiteralsInClauseCount[cls]);
+        {
+            //reconstruct critvar xor stack
+            auto XorStack = 0;
+            uint32_t SatCount = 0;
+            auto clauseweight = s_ClauseWeights[cls];
+            for (auto lit = 0; lit < s_LiteralsInClauseCount[cls]; lit++) {
+                const auto Var = s_LiteralsInClauses[cls][lit];
+                if (false == soln->State(Var)) { 
+                    XorStack ^= Var; 
+                    SatCount++;
+                    clauseweight = 0;
+                }
+            }            
+            check_sum += clauseweight;
+            assert(isEqual(XorStack, CritVar));
+            assert(isEqual(SatCount, s_SatisfiedLitCount[cls]));
+        }
+    } //for cls
+    assert(isEqual(cost, check_sum));
+    assert(isEqual(soln->cost, cost));
+#endif
     int SATSoftCount = 0;
+    decltype(s_FalseCount) sollFalseCount = 0;
     int64_t soll_sum = 0;
     for (auto cls = 0; cls < sClauseCount; cls++) {
         auto clauseweight = s_ClauseWeights[cls];
@@ -1113,22 +1685,37 @@ bool PureCMS_t::verify() const {
             if (best_soln->State(CurrentVar) == 0) { clauseweight = 0; SATSoftCount++; break; } //clause is satisfied, reset its weight
         }
         soll_sum += clauseweight;
+        sollFalseCount += (isEqual(0u, s_SatisfiedLitCount[cls]));
     }
     this->SATSoftCount = SATSoftCount;
 
     LogIf(1, soll_sum == best_cost, "Solution is valid and cost (" _lli_ ") checks out", best_cost);
     LogIf(1, soll_sum != best_cost, "Solution is not valid, reported cost = " _lli_ ", but real cost = " _lli_ "", best_cost, soll_sum);
-    printf("s UNKNOWN\n");
-    printf("o " _lli_ "\n", best_cost);
+    assert(isEqual(soll_sum, best_cost));
+    assert(isEqual(s_FalseCount, sollFalseCount));
     return result && (soll_sum == (best_cost + unit_fixed_weight));
 }
 
 template <int LogLevel>
 int MainLoop(PureCMS_t& pCMS) {
-    pCMS.initSoln<LogLevel>();
+    if (!pCMS.hasResumed) {
+        pCMS.initSoln<LogLevel>();
+    }
     pCMS.doLS<LogLevel>();
-    const std::string filename = "witness.txt";
-    pCMS.showSoln<LogLevel>(filename);
+    pCMS.TrySaveBestSoln<LogLevel>();
+    if (pCMS.doWriteWitness() ) {
+        const std::string filename = "witness.txt";
+        pCMS.showSoln<LogLevel>(filename);
+    } else {
+        const auto DoVerification = true;
+        const auto DontShowAssignment = false;
+        pCMS.showSoln<LogLevel>(DoVerification, DontShowAssignment);
+    }
+    if (pCMS.hasOutputFile()) {
+        //Write the output file to disk
+        pCMS.write_state<LogLevel>();
+        //pCMS.read_state<LogLevel>(); if you want to test correct writing
+    }
     return 0; //todo: add different return codes if needed.
 }
 
@@ -1144,7 +1731,7 @@ int main(const int argc, const char* argv[]) {
         //parameters.SetFilename("/home/johan/Documents/GitHub/CarlSAT/src/aes-mul_8_3.wcnf");
         parameters.SetFilename("../example.wcard");
         parameters.RandomSeed = 1;
-        parameters.TimeOutInSecs = 30;
+        parameters.TimeOutInMillisecs = 30 * 1000;
     } else {
         if (ParseOptions(argc, argv, parameters) != prSuccess) { exit(0); }
     }
@@ -1160,7 +1747,6 @@ int main(const int argc, const char* argv[]) {
         case 2: exitstatus = MainLoop<2>(pCMS); break;
         default: exitstatus = MainLoop<3>(pCMS); break; //if ppl insist on crazy loglevels, let's give it to them.
     }
-
     return 0;
 }
 
