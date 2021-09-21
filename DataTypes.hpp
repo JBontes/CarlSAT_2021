@@ -176,7 +176,7 @@ struct AtomDontHashThis_t {
 const auto AtomBaseSize = sizeof(AtomDontHashThis_t);
 
 //A bitset for the variable assignments
-//The state for non existing variable 0 is stored as well, just to avoid +1/-1 adjustments
+//The state for non-existing variable 0 is stored as well, just to avoid +1/-1 adjustments
 struct Atom_t : public AtomDontHashThis_t {
     enum BoolOp { opXor, opOr, opAnd };
 private:
@@ -192,6 +192,7 @@ public:   //TODO make private later
     static const int ValidFalseCount = 0;
 public:
     uint32_t VarCount;  //<<-- start hashing from here
+    uint32_t s_FalseCount;
     int64_t cost;
     float time;
     union {
@@ -203,11 +204,14 @@ public:
     Atom_t(const Atom_t&) = delete;
     Atom_t& operator = (const Atom_t&) = delete; //can only allocate Atoms as pointers.
 
+    void WriteToStream(std::ofstream& file) const;
+    void ReadFromStream(std::ifstream& file);
     uint32_t GetRaw(const int index) const { return raw[index]; }
     constexpr int GetCost() const { return cost; }
-    constexpr static int DataSize(const int VarCount); //Datasize is guaranteed to be a multiple of 256 bits
-    static Atom_t* NewHostAtom(const int VarCount, const Strategy_t& Strategy);
     constexpr static int RawSize(const int VarCount);
+    constexpr static int DataSize(const int VarCount); //Datasize is guaranteed to be a multiple of 256 bits
+    constexpr static int Int64Size(const int VarCount);
+    static Atom_t* NewHostAtom(const int VarCount, const Strategy_t& Strategy);
     int RawSize() const { return Atom_t::RawSize(this->VarCount); }
     void FillWithRandomData(RandomState_t& RandomGenerator);
     void FillAllSame(const InitStrategy_t Value);
@@ -219,7 +223,7 @@ public:
     bool operator[](const uint32_t variable) const;
     int DataSize() const { return this->DataSize(this->VarCount); }
     int* HashStart() const { return (int*)&this->VarCount; }
-    int HashSize() const { return DataSize() - sizeof(AtomDontHashThis_t); }
+    int HashSize() const { return Int64Size(VarCount) - sizeof(AtomDontHashThis_t); }
     int Avx2Count() const { return ((VarCount + (255 + 1)) / BitsInInt256); }
     int IntCount() const { return ((VarCount + (31 + 1/*make provision for dummy var 0*/)) / BitsInInt32); }
     int Int64Count() const { return ((VarCount + (63 + 1)) / BitsInInt64); }
@@ -239,6 +243,7 @@ public:
     void CloneInto(Atom_t* dest) const;
 private:
     __forceinline void GetIndexes(const uint32_t Var, int& start, int& bit) const;
+    __forceinline uint64_t GetMask(int& Raw64Index) const;
     template <BoolOp operation>
     __forceinline Atom_t& BoolOpAssign(const Atom_t& b);
 public:
@@ -252,16 +257,26 @@ public:
 
 template <Atom_t::BoolOp operation>
 Atom_t& Atom_t::BoolOpAssign(const Atom_t& b) {
-    auto count = b.Avx2Count();
-    assert1(this->Avx2Count() == count);
+    const auto count = b.Avx2Count();
+    assert1(Avx2Count() == count);
     for (auto i = 0; i < count; i++) {
         switch (operation) {
-            case opXor: this->avxraw[i] = _mm256_xor_si256(this->avxraw[i], b.avxraw[i]); break;
-            case opOr:  this->avxraw[i] = _mm256_or_si256(this->avxraw[i], b.avxraw[i]); break;
-            case opAnd: this->avxraw[i] = _mm256_and_si256(this->avxraw[i], b.avxraw[i]); break;
+            case opXor: avxraw[i] = _mm256_xor_si256(this->avxraw[i], b.avxraw[i]); break;
+            case opOr:  avxraw[i] = _mm256_or_si256(this->avxraw[i], b.avxraw[i]); break;
+            case opAnd: avxraw[i] = _mm256_and_si256(this->avxraw[i], b.avxraw[i]); break;
             default: assert1(false);
         }
     }
+    // //Mask off the portion that does not correspond to variables
+    // int Raw64Index;
+    // const auto mask = GetMask(Raw64Index); 
+
+    // switch (operation) {
+    //     case opXor: raw64[Raw64Index] &= ~mask; break;
+    //     case opOr:  raw64[Raw64Index] &= ~mask; break;
+    //     case opAnd: raw64[Raw64Index] |=  mask; break;
+    //     default: assert(false);
+    // }
     return *this;
 }
 
@@ -285,7 +300,7 @@ int Atom_t::PopCount() const {
     for (auto i = 0; i < Int64Count(); i++) {
         result += popcount64(raw64[i]);
     }
-    result -= popcount64(raw64[Int64Count() - 1] & (~(((uint64_t)-1) << ((VarCount + 1) % 64)))); //remove tail junk
+    result -= popcount64(raw64[Int64Count() - 1] & ((((uint64_t)-1) << ((VarCount + 1) % 64)))); //remove tail junk
     return result;
 }
 
@@ -301,13 +316,19 @@ int Atom_t::DiffCount(const Atom_t& b) const {
 
 static const int AtomOverheadSize = sizeof(Atom_t) - sizeof(__m256i);
 
+
 constexpr int Atom_t::RawSize(const int VarCount) {
-    auto avx2_element_count = ((VarCount + 255) / 256); //the number of 256bit entries.
+    const auto avx2_element_count = ((VarCount + 255) / 256); //the number of 256bit entries.
     return avx2_element_count * (256 / 32) * sizeof(int);
 }
 
 constexpr int Atom_t::DataSize(const int VarCount) {
     return RawSize(VarCount) + AtomOverheadSize;
+}
+
+constexpr int Atom_t::Int64Size(const int VarCount) {
+    const auto int64_element_count = ((VarCount + 63) / 64);
+    return (int64_element_count * (64 / 32) * sizeof(int)) + AtomOverheadSize;
 }
 
 bool Atom_t::operator[](const uint32_t variable) const {
@@ -375,6 +396,13 @@ __forceinline void Atom_t::GetIndexes(const uint32_t Var, int& start, int& bit) 
     bit = (1 << (Var % 32));
 }
 
+__forceinline uint64_t Atom_t::GetMask(int& Raw64Index) const {
+    const auto start = (VarCount + 1) / 64;
+    const auto lowmask = ((1 << start) - 1);
+    Raw64Index = (VarCount + 1) / 64;
+    return ~lowmask;
+}
+
 bool Atom_t::FlipVariable(const uint32_t Var) {
     int start, bit;
     GetIndexes(Var, start, bit);
@@ -394,16 +422,75 @@ void Atom_t::SetVariable(const uint32_t Var) {
     }
 }
 
+void Atom_t::WriteToStream(std::ofstream& file) const {
+/**
+ * int64_t FlipCount;
+    int CriticalClauseCount;
+    mutable int Hash;
+    bool hasImproved;
+    uint32_t AncestorID;
+    Strategy_t Strategy;
+
+    uint32_t VarCount;  //<<-- start hashing from here
+    int64_t cost;
+    float time;
+    union {
+        uint32_t raw[1]; //don't worry about alignment, the compiler will not use aligned read/writes anyway.}
+        uint64_t raw64[1];
+        __m256i avxraw[1];
+    };
+*/
+    Hash = CalculateHash();
+    file.write((const char*)&FlipCount, sizeof(FlipCount));
+    file.write((const char*)&CriticalClauseCount, sizeof(CriticalClauseCount));
+    file.write((const char*)&Hash, sizeof(Hash));
+    //file.write((char*)&hasImproved, sizeof(hasImproved)); reset this to false on read.
+    file.write((const char*)&AncestorID, sizeof(AncestorID));
+    file.write((const char*)&Strategy, sizeof(Strategy));
+    file.write((const char*)&VarCount, sizeof(VarCount));
+    file.write((const char*)&s_FalseCount, sizeof(s_FalseCount));
+    file.write((const char*)&cost, sizeof(cost));
+    file.write((const char*)&time, sizeof(time));
+    file.write((const char*)raw, ((VarCount + 31)/32) * sizeof(int));
+#ifdef _DEBUG
+  printf("c WriteToStream: cost: %llu, Popcount: %i, FalseCount = %i, hash: %i\n", cost, PopCount(), s_FalseCount, Hash);
+#endif
+}
+
+
+void Atom_t::ReadFromStream(std::ifstream& file) {
+    file.read((char*)&FlipCount, sizeof(FlipCount));
+    file.read((char*)&CriticalClauseCount, sizeof(CriticalClauseCount));
+    file.read((char*)&Hash, sizeof(Hash));
+    //file.read((char*)&hasImproved, sizeof(hasImproved)); reset this to false on read.
+    hasImproved = false;
+    file.read((char*)&AncestorID, sizeof(AncestorID));
+    file.read((char*)&Strategy, sizeof(Strategy));
+    file.read((char*)&VarCount, sizeof(VarCount));
+    file.read((char*)&s_FalseCount, sizeof(s_FalseCount));
+    file.read((char*)&cost, sizeof(cost));
+    file.read((char*)&time, sizeof(time));
+    file.read((char*)raw, ((VarCount + 31)/32) * sizeof(int));
+#ifdef _DEBUG
+    const auto IstHash = CalculateHash();
+    assert(isEqual(IstHash, Hash));
+    printf("c ReadFromStream: cost: %llu, Popcount: %i, FalseCount = %i, hash: %i\n", cost, PopCount(), s_FalseCount, Hash);
+#endif
+}
+
 bool Atom_t::State(const uint32_t Var) const {
     int start, bit;
     GetIndexes(Var, start, bit);
     return bool(raw[start] & bit);
 }
 
+
+
 Atom_t* Atom_t::NewHostAtom(const int VarCount, const Strategy_t& Strategy) {
     auto result = calloc<Atom_t>(Atom_t::DataSize(VarCount));
     result->VarCount = VarCount;
     result->cost = Atom_t::InvalidAtom;
+    result->s_FalseCount = -1;
     result->FlipCount = 0;
     result->CriticalClauseCount = -1;
     result->Hash = 0;
@@ -422,7 +509,6 @@ void Atom_t::FillWithRandomData(RandomState_t& RandomGenerator) {
     }
 }
 
-
 void Atom_t::FillAllSame(const InitStrategy_t Value) {
     cost = (int)Value - Atom_t::AllZeroInitialized;
     FlipCount = 0;
@@ -438,7 +524,6 @@ void Atom_t::FillAllSame(const InitStrategy_t Value) {
     } else {
         cost = Atom_t::AllZeroInitialized;
     }
-
 }
 
 bool operator==(const Atom_t& a, const Atom_t& b) {
