@@ -236,12 +236,12 @@ template <typename T>
 constexpr uint32_t BitCount() { return sizeof(T) * 8; }
 
 template <typename T>
-bool isEqual(const T& a, const T& b) { return a == b; } //just in case both sides of a comparison are mutable.
+constexpr bool isEqual(const T& a, const T& b) { return a == b; } //just in case both sides of a comparison are mutable.
 
 template <typename T>
-bool notEqual(const T& a, const T& b) { return a != b; } //just in case both sides of a comparison are mutable.
+constexpr bool notEqual(const T& a, const T& b) { return a != b; } //just in case both sides of a comparison are mutable.
 
-int BoolToPlusMinus(const bool Flag) { return (1 ^ -Flag) + Flag; } //https://graphics.stanford.edu/~seander/bithacks.html#ConditionalNegate
+constexpr int BoolToPlusMinus(const bool Flag) { return (1 ^ -Flag) + Flag; } //https://graphics.stanford.edu/~seander/bithacks.html#ConditionalNegate
 
 
 
@@ -412,7 +412,7 @@ private:
     // A and C are constants
     unsigned LCGStep(unsigned& z, const unsigned A, const unsigned C) { return z = (A * z + C); }
 public:
-    RandomState_t() = delete;
+    //RandomState_t() = delete;
 #ifdef __CUDA_ARCH__
     __device__ explicit RandomState_t(uint32_t tid) {
         curandState s;
@@ -422,6 +422,9 @@ public:
     }
 #else
     explicit RandomState_t(uint32_t) { init(std::rand(), std::rand(), std::rand(), std::rand()); } //todo: base this on the ns clock.
+    explicit RandomState_t(const uint32_t z1, const uint32_t z2, const uint32_t z3, const uint32_t z4): z1(z1), z2(z2), z3(z3), z4(z4) {
+         this->z1 = (z1 | (128 * (z1 < 128))); this->z2 = (z2 | (128 * (z2 < 128))); this->z3 = (z3 | (128 * (z3 < 128)));
+    }
 #endif
     unsigned NextInt(const unsigned Max); //A uniform random generator 0 <= R < Max
     uint64_t NextInt64(const uint64_t Max);
