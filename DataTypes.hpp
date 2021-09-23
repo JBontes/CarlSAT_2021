@@ -257,19 +257,32 @@ public:
 
 template <Atom_t::BoolOp operation>
 Atom_t& Atom_t::BoolOpAssign(const Atom_t& b) {
-    const auto count = b.Avx2Count();
-    assert1(Avx2Count() == count);
+    const auto count = b.Int64Count();
+    assert1(Int64Count() == count);
     for (auto i = 0; i < count; i++) {
         switch (operation) {
-            case opXor: avxraw[i] = _mm256_xor_si256(this->avxraw[i], b.avxraw[i]); break;
-            case opOr:  avxraw[i] = _mm256_or_si256(this->avxraw[i], b.avxraw[i]); break;
-            case opAnd: avxraw[i] = _mm256_and_si256(this->avxraw[i], b.avxraw[i]); break;
+            case opXor: raw64[i] ^= b.raw64[i]; break;
+            case opOr:  raw64[i] |= b.raw64[i]; break;
+            case opAnd: raw64[i] &= b.raw64[i]; break;
             default: assert1(false);
         }
     }
+
+
+
+    // const auto count = b.Avx2Count();
+    // assert1(Avx2Count() == count);
+    // for (auto i = 0; i < count; i++) {
+    //     switch (operation) {
+    //         case opXor: avxraw[i] = _mm256_xor_si256(this->avxraw[i], b.avxraw[i]); break;
+    //         case opOr:  avxraw[i] = _mm256_or_si256(this->avxraw[i], b.avxraw[i]); break;
+    //         case opAnd: avxraw[i] = _mm256_and_si256(this->avxraw[i], b.avxraw[i]); break;
+    //         default: assert1(false);
+    //     }
+    // }
     // //Mask off the portion that does not correspond to variables
     // int Raw64Index;
-    // const auto mask = GetMask(Raw64Index); 
+    // const auto mask = GetMask(Raw64Index);
 
     // switch (operation) {
     //     case opXor: raw64[Raw64Index] &= ~mask; break;
@@ -534,21 +547,21 @@ bool operator==(const Atom_t& a, const Atom_t& b) {
     //if (a.FalseCount != b.FalseCount) { return false; }
     //cppcheck-suppress unreadVariable
     auto result = true;
-#ifdef _DEBUG
+//#ifdef _DEBUG
     for (auto i = 0; i < IntCount; i++) {
         if (a.raw[i] != b.raw[i]) { result = false; }
     }
-#endif
-    const auto AvxCount = a.Avx2Count();
-    if (AvxCount != b.Avx2Count()) { printif(result, "Atom_t == is incorrect"); assert1(!result); return false; }
-    for (auto i = 0; i < AvxCount; i++) {
-        const auto packedCompare = _mm256_cmpeq_epi8(a.avxraw[i], b.avxraw[i]);
-        const auto bitmask = _mm256_movemask_epi8(packedCompare);
-#ifdef _DEBUG
-        const auto Equal = -1;
-        if ((!result) && (bitmask != Equal)) { printif(result, "Atom_t operator==() is incorrect"); assert1(!result); return false; }
-#endif
-    }
+//#endif
+//    const auto AvxCount = a.Avx2Count();
+//    if (AvxCount != b.Avx2Count()) { printif(result, "Atom_t == is incorrect"); assert1(!result); return false; }
+//    for (auto i = 0; i < AvxCount; i++) {
+//        const auto packedCompare = _mm256_cmpeq_epi8(a.avxraw[i], b.avxraw[i]);
+//        const auto bitmask = _mm256_movemask_epi8(packedCompare);
+//#ifdef _DEBUG
+//        const auto Equal = -1;
+//        if ((!result) && (bitmask != Equal)) { printif(result, "Atom_t operator==() is incorrect"); assert1(!result); return false; }
+//#endif
+//    }
     assert1(result);
     return true;
 }
